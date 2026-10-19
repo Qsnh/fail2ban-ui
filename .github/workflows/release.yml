@@ -1,0 +1,174 @@
+# Builds the macOS installers of a release, one disk image for Apple silicon
+# (arm64) and one for Intel (x86_64), and uploads them to the release:
+#
+#   1. Set "version" in mygo.json, say 0.5.0, then commit and push.
+#   2. Push the tag of that version:
+#        git tag v0.5.0 && git push origin v0.5.0
+#      or publish a release of the tag v0.5.0 on GitHub.
+#
+# The workflow checks that the tag is v + the version of mygo.json, runs the
+# tests, builds both disk images at once, and uploads them. A release it
+# creates stays a draft until both are uploaded, then it publishes it.
+#
+# Run it by hand (Actions → Release → Run workflow) to build the disk
+# images as artifacts of the run, without a release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release, and the uploads to it
+
+# A release published on GitHub may start the workflow twice, for its tag
+# and for the release: the second run waits for the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      draft: ${{ steps.release.outputs.draft }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the version
+        id: version
+        run: |
+          version=$(jq -r .version mygo.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A tag pushed, or a release published, has the ref of the tag.
+          case $GITHUB_REF in
+            refs/tags/*) ;;
+            *) echo "release=false" >> "$GITHUB_OUTPUT"; exit 0;;
+          esac
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 mygo.json 的版本 $version 不一致：请把 mygo.json 的 version 改为 ${GITHUB_REF_NAME#v}，或打标签 v$version"
+            exit 1
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+      - name: Create the release, or add the downloads to its notes
+        id: release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat > "$RUNNER_TEMP/downloads.md" <<EOF
+          ## 下载
+
+          | 安装包 | 适用的 Mac |
+          |---|---|
+          | RuleLens-$VERSION-mac-arm64.dmg | Apple 芯片（M1 及以后） |
+          | RuleLens-$VERSION-mac-intel.dmg | Intel 处理器 |
+
+          不确定是哪种：点屏幕左上角的苹果菜单 →「关于本机」，「芯片」为 Apple M 系列的选 arm64，「处理器」为 Intel 的选 intel。
+
+          ## 首次打开
+
+          安装包没有经过 Apple 公证。打开 dmg，把 RuleLens 拖进「应用程序」后，第一次打开若提示无法验证开发者，到「系统设置 → 隐私与安全性」中点「仍要打开」；若提示「已损坏」，在终端执行一次：
+
+              xattr -dr com.apple.quarantine /Applications/RuleLens.app
+          EOF
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "RuleLens $VERSION" --notes-file "$RUNNER_TEMP/downloads.md"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A release published by hand keeps its notes, the downloads after
+          # them; a draft left by an earlier run is published at the end.
+          echo "draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" >> "$GITHUB_OUTPUT"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/notes.md"
+          if ! grep -q "RuleLens-$VERSION-mac-arm64.dmg" "$RUNNER_TEMP/notes.md"; then
+            { printf '\n\n'; cat "$RUNNER_TEMP/downloads.md"; } >> "$RUNNER_TEMP/notes.md"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # The end-to-end tests skip themselves without a server.
+      - run: go vet ./... && go test ./...
+        env:
+          CGO_ENABLED: "0"
+
+  build:
+    needs: [prepare, test]
+    name: macOS ${{ matrix.name }}
+    # Apple silicon: MyGo needs no cgo, so it builds the Intel app as well.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: arm64, arch: arm64, cpu: arm64, label: arm64 }
+          - { name: Intel, arch: amd64, cpu: x86_64, label: intel }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        # hdiutil, which makes the disk image, fails now and then on the
+        # runners: try again.
+        run: |
+          for try in 1 2 3; do
+            go tool mygo build -platform darwin/${{ matrix.arch }} && exit 0
+            echo "::warning::构建失败（第 $try 次），重试"
+            sleep 15
+          done
+          exit 1
+      - name: Name the disk image
+        id: dmg
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          out=build/darwin-${{ matrix.arch }}
+          cpu=$(lipo -archs "$out/RuleLens.app/Contents/MacOS/RuleLens")
+          if [ "$cpu" != "${{ matrix.cpu }}" ]; then
+            echo "::error::应用的架构是 $cpu，而不是 ${{ matrix.cpu }}"
+            exit 1
+          fi
+          set -- "$out"/*.dmg
+          if [ $# != 1 ] || [ ! -f "$1" ]; then
+            echo "::error::$out 中应有一个 dmg：$*"
+            exit 1
+          fi
+          mkdir -p dist
+          dmg=dist/RuleLens-$VERSION-mac-${{ matrix.label }}.dmg
+          mv "$1" "$dmg"
+          hdiutil verify "$dmg"
+          echo "path=$dmg" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: RuleLens-${{ needs.prepare.outputs.version }}-mac-${{ matrix.label }}
+          path: ${{ steps.dmg.outputs.path }}
+          if-no-files-found: error
+      - name: Upload to the release
+        if: needs.prepare.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ steps.dmg.outputs.path }}" --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.draft == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

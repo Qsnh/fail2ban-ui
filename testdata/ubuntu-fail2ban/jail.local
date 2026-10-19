@@ -1,0 +1,16 @@
+[DEFAULT]
+backend = polling
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8
+
+[sshd]
+enabled = true
+port = ssh,2222
+logpath = /var/log/auth.log
+maxretry = 3
+findtime = 10m
+bantime = 1h
+
+[recidive]
+enabled = true
+logpath = /var/log/fail2ban.log
+bantime = 1w
