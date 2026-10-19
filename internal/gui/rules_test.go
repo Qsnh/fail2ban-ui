@@ -25,7 +25,7 @@ func fill(t *testing.T, tt *ui.Tester, label, text string) {
 func openDialog(t *testing.T, tt *ui.Tester, a *App, button string) {
 	t.Helper()
 	click(t, tt, button)
-	a.views["s1"].tab = 2
+	a.views["s1"].tab = tabFirewall
 	tt.Frame()
 }
 

@@ -12,12 +12,13 @@ import (
 	"github.com/rulelens/rulelens/internal/remote"
 )
 
-// probe asks the fail2ban server, over its socket, what fail2ban-client
-// would print of each jail, reads the configuration of the jails, those
-// not running too, and prints it all as one line of JSON. It runs with the
-// Python of fail2ban-client, 2 or 3, whose fail2ban package it uses.
-const probe = `import glob, json, os, sys, time
-out = {"jails": []}
+// probeHead starts the Python scripts that ask the fail2ban server, over
+// its socket, as fail2ban-client does: q asks, failing as the server
+// does, and opt asks, None when it fails. done prints out as one line of
+// JSON, and ends. The scripts run with the Python of fail2ban-client, 2
+// or 3, whose fail2ban package they use.
+const probeHead = `import glob, json, os, sys, time
+out = {}
 def done():
     sys.stdout.write(json.dumps(out, default=str) + "\n")
     sys.exit(0)
@@ -53,6 +54,11 @@ def opt(*cmd):
     except Exception:
         return None
 out["now"] = time.strftime("%Y-%m-%d %H:%M:%S")
+`
+
+// probe asks what fail2ban-client would print of each jail, reads the
+// configuration of the jails, those not running too, and prints it all.
+const probe = probeHead + `out["jails"] = []
 try:
     st = dict(q("status"))
 except Exception as e:
@@ -103,12 +109,18 @@ except Exception as e:
 done()
 `
 
-// script reads fail2ban, and what it put in the firewall, in sections.
-var script = `f2b=$(command -v fail2ban-client) || { echo '@@missing'; exit 0; }
+// python runs a script with the Python of fail2ban-client, printing what
+// it prints after "@@json", or "@@missing" without fail2ban.
+func python(script string) string {
+	return `f2b=$(command -v fail2ban-client) || { echo '@@missing'; exit 0; }
 py=$(sed -n '1s/^#![[:space:]]*//p' "$f2b")
 echo '@@json'
-${py:-python3} -c ` + remote.Quote(probe) + ` 2>&1
-echo '@@firewall'
+${py:-python3} -c ` + remote.Quote(script) + ` 2>&1
+`
+}
+
+// script reads fail2ban, and what it put in the firewall, in sections.
+var script = python(probe) + `echo '@@firewall'
 {
   if command -v iptables >/dev/null 2>&1; then
     r=$(iptables -S 2>/dev/null | grep -E 'f2b-|fail2ban'); [ -n "$r" ] && printf '# iptables -S\n%s\n\n' "$r"

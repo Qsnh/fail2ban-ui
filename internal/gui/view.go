@@ -540,15 +540,22 @@ func summary(c *ui.Context, s *fail2ban.Status) {
 
 func (a *App) tabs(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 	log := sv.conn.Log()
-	ui.Tabs(c, &sv.tab, fmt.Sprintf("规则 (%d)", len(s.Jails)), fmt.Sprintf("封禁 IP (%d)", s.Banned()), "防火墙中的封禁", fmt.Sprintf("操作日志 (%d)", len(log))).Label("视图")
+	ui.Tabs(c, &sv.tab, fmt.Sprintf("规则 (%d)", len(s.Jails)), fmt.Sprintf("封禁 IP (%d)", s.Banned()), "封禁历史", "防火墙中的封禁", fmt.Sprintf("操作日志 (%d)", len(log))).Label("视图")
+	// Showing the history reads it again.
+	if sv.tab == tabHistory && sv.shownTab != tabHistory {
+		a.loadHistory(sv, false)
+	}
+	sv.shownTab = sv.tab
 	switch sv.tab {
-	case 0:
+	case tabRules:
 		a.rulesTab(c, sv, s)
-	case 1:
+	case tabBans:
 		a.bansTab(c, sv, s)
-	case 2:
+	case tabHistory:
+		a.historyTab(c, sv, s)
+	case tabFirewall:
 		firewallTab(c, s)
-	case 3:
+	case tabLog:
 		a.logTab(c, sv, log)
 	}
 }
@@ -826,7 +833,7 @@ func (a *App) bansTab(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 			label = fmt.Sprintf("解封 %d 项", len(chosen))
 		}
 		labeledButton(c, false, iconUnlock, label).Disabled(busy || len(chosen) == 0).OnClick(unban)
-		ui.Text(c, "仍在封禁中的来源 IP；到期自动解封后不再列出。Cmd/Ctrl 或 Shift 点击可多选。").FontSize(12.5).TextColor(t.TextMuted).MinWidth(0).SingleLine()
+		ui.Text(c, "仍在封禁中的来源 IP；解封后不再列出，可在「封禁历史」中查看。Cmd/Ctrl 或 Shift 点击可多选。").FontSize(12.5).TextColor(t.TextMuted).MinWidth(0).SingleLine()
 		ui.Spacer(c)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, iconSearch).FontSize(14).TextColor(t.TextMuted)
@@ -843,8 +850,9 @@ func (a *App) bansTab(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 			ui.Icon(c, iconBan).FontSize(32).TextColor(t.TextMuted)
 			ui.Text(c, "当前没有被封禁的 IP").FontSize(15).Bold()
 			if n := s.TotalBanned(); n > 0 {
-				ui.Text(c, fmt.Sprintf("fail2ban 启动以来共封禁 %d 次，均已到期自动解封。", n)).TextColor(t.TextMuted)
+				ui.Text(c, fmt.Sprintf("fail2ban 启动以来共封禁 %d 次，均已解封。", n)).TextColor(t.TextMuted)
 			}
+			labeledButton(c, false, iconHistory, "查看封禁历史").OnClick(func() { sv.tab = tabHistory })
 		})
 		return
 	}

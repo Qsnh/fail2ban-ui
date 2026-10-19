@@ -164,6 +164,19 @@ func TestWindow(t *testing.T) {
 		t.Errorf("server's bans:\n%s", out)
 	}
 
+	// The history lists the address lifted, and the one banned still.
+	click("封禁历史")
+	expect("按 IP")
+	expect(ip)
+	expect("203.0.113.51")
+	expect("封禁中")
+	snapshot("e2e-history")
+	fill("筛选历史", ip)
+	click("按次")
+	expect("匹配 1 个 IP，封禁")
+	expect("已解封")
+	snapshot("e2e-history-bans")
+
 	// The log shows the commands, and never a password.
 	clickPrefix("操作日志")
 	tt.Frame()

@@ -71,7 +71,35 @@ type serverView struct {
 	banSort   ui.SortOrder
 	banChosen ui.Selection[string]
 	logList   ui.ListState
+
+	// history is the bans fail2ban made, lifted too, as last read for its
+	// tab, historyErr why it could not be read when it never was, and
+	// historyLoading whether a reading runs or waits. shownTab is the tab
+	// shown last: showing the history's reads it again.
+	history        *fail2ban.History
+	historyErr     string
+	historyLoading bool
+	shownTab       int
+	// The history's tab: by address or ban by ban, its filter, the tables
+	// and their orders, the address chosen, and the rows as last listed.
+	histMode   int
+	histFilter string
+	histIPs    ui.ListState
+	histIPSort ui.SortOrder
+	histChosen string
+	histList   ui.ListState
+	histSort   ui.SortOrder
+	histMemo   historyMemo
 }
+
+// The tabs of a server's page.
+const (
+	tabRules = iota
+	tabBans
+	tabHistory
+	tabFirewall
+	tabLog
+)
 
 // status returns fail2ban of a server connected, nil otherwise.
 func (sv *serverView) status() *fail2ban.Status {
@@ -239,6 +267,7 @@ func (a *App) drop(sv *serverView, state connState, err string) {
 	sv.state, sv.err = state, err
 	sv.busy, sv.queued = "", nil
 	sv.banChosen.Clear()
+	sv.history, sv.historyErr, sv.historyLoading, sv.histMemo = nil, "", false, historyMemo{}
 }
 
 // readTimeout bounds a reading of fail2ban.
@@ -405,10 +434,15 @@ func (a *App) run(sv *serverView, j job) {
 	})
 }
 
-// read reads fail2ban on a server connected again, unless an operation
-// runs, which reads it as it ends.
+// read reads fail2ban on a server connected again, and the history of its
+// bans while the page shows it, unless an operation runs, which reads
+// fail2ban as it ends.
 func (a *App) read(sv *serverView, quiet bool) {
 	if sv.state != stateConnected || sv.busy != "" {
+		return
+	}
+	if a.historyShown(sv) {
+		a.loadHistory(sv, quiet)
 		return
 	}
 	a.run(sv, job{label: "刷新", quiet: quiet})

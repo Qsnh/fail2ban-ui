@@ -71,6 +71,34 @@ type fakeF2B struct {
 	// failing it; changes counts the changes taken.
 	testErr string
 	changes int
+
+	// events are the lines of its log, as the history's script prints
+	// them; historySource is where it reads them, "file" when empty, and
+	// historyFail the error it exits with. historyReads counts its runs.
+	events        [][]string
+	historySource string
+	historyFail   string
+	historyReads  int
+}
+
+// historyOutput is what the history's script prints.
+func (f *fakeF2B) historyOutput() remote.Result {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.historyReads++
+	if f.historyFail != "" {
+		return remote.Result{ExitCode: 1, Stderr: f.historyFail}
+	}
+	out := map[string]any{"now": serverNow, "target": "/var/log/fail2ban.log", "purgeage": 86400, "count": len(f.events), "problems": []string{}}
+	switch f.historySource {
+	case "", "file":
+		out["source"], out["files"], out["events"] = "file", []string{"/var/log/fail2ban.log.1", "/var/log/fail2ban.log"}, f.events
+	case "none":
+		out["target"], out["events"] = "SYSLOG", []string{}
+		out["problems"] = []string{"journalctl: [Errno 2] No such file or directory: 'journalctl'"}
+	}
+	b, _ := json.Marshal(out)
+	return remote.Result{Stdout: "@@json\n" + string(b) + "\n"}
 }
 
 // change makes a change as its script does: it writes or removes the file,
@@ -324,6 +352,9 @@ func (x fakeExec) RunPrivileged(_ context.Context, cmd string) (remote.Result, e
 	}
 	if strings.Contains(cmd, "fail2ban-client -t") {
 		return x.f2b.change(cmd), nil
+	}
+	if strings.Contains(cmd, "logtarget") {
+		return x.f2b.historyOutput(), nil
 	}
 	return remote.Result{Stdout: x.f2b.output()}, nil
 }

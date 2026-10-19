@@ -127,6 +127,28 @@ func TestFail2ban(t *testing.T) {
 	if strings.Contains(s.Firewall, ip) {
 		t.Errorf("still in the firewall:\n%s", s.Firewall)
 	}
+
+	// The history has the ban, lifted.
+	h, err := fail2ban.ReadHistory(context.Background(), c, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("history from %s %q: %d bans of %d records since %v", h.Source, h.Files, len(h.Bans), h.Count, h.Since)
+	if h.Source != fail2ban.SourceFile || h.Problem != "" || !slices.Contains(h.Files, "/var/log/fail2ban.log") || len(h.Problems) > 0 {
+		t.Fatalf("history %+v", h)
+	}
+	var past *fail2ban.PastBan
+	for i, b := range h.Merged(s) {
+		if b.IP == ip && b.Jail == "sshd" && (past == nil || b.Start.After(past.Start)) {
+			past = &h.Merged(s)[i]
+		}
+	}
+	if past == nil {
+		t.Fatalf("no ban of %s in the history", ip)
+	}
+	if d := past.Start.Sub(ban.Start); d < -2*time.Second || d > 2*time.Second || past.Active || past.End.Before(past.Start) || past.End.Sub(past.Start) > time.Minute {
+		t.Errorf("past ban %+v, ban %+v", past, ban)
+	}
 }
 
 // TestManage creates a jail, stops it, has fail2ban refuse a change, and

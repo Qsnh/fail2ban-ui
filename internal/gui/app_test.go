@@ -173,7 +173,10 @@ func TestBansEnded(t *testing.T) {
 	expect(t, tt, "51", "启动以来，含已解封", "当前 0 · 启动以来 51（含已解封）")
 	click(t, tt, "封禁 IP (0)")
 	tt.Frame()
-	expect(t, tt, "当前没有被封禁的 IP", "fail2ban 启动以来共封禁 51 次，均已到期自动解封。")
+	expect(t, tt, "当前没有被封禁的 IP", "fail2ban 启动以来共封禁 51 次，均已解封。")
+	click(t, tt, "查看封禁历史")
+	tt.Frame()
+	expect(t, tt, "没有封禁记录")
 }
 
 func TestFirewallTab(t *testing.T) {
@@ -561,6 +564,23 @@ func TestDurationLabel(t *testing.T) {
 	}
 }
 
+// snapshotEvents is a log of two weeks of bans, for the snapshots.
+func snapshotEvents() [][]string {
+	ips := []string{"203.0.113.5", "198.51.100.23", "192.0.2.140", "45.33.12.7", "185.220.101.4", "103.152.18.66",
+		"2001:db8::42", "61.177.172.13", "218.92.0.112", "203.0.113.77", "141.98.11.31"}
+	start, _ := time.Parse(time.DateTime, "2026-10-05 03:12:40")
+	var out [][]string
+	for i := range 60 {
+		ip, jail := ips[i*7%len(ips)], "sshd"
+		if i%5 == 3 {
+			jail = "nginx-http-auth"
+		}
+		at := start.Add(time.Duration(i)*5*time.Hour + time.Duration(i*i%37)*time.Minute)
+		out = append(out, []string{at.Format(time.DateTime), jail, "Ban", ip}, []string{at.Add(time.Hour).Format(time.DateTime), jail, "Unban", ip})
+	}
+	return out
+}
+
 // TestSnapshots draws the main pages into PNGs of the directory
 // RULELENS_SNAPSHOTS names, to look at.
 func TestSnapshots(t *testing.T) {
@@ -626,8 +646,14 @@ table inet f2b-table {
 	save("unban")
 	a.alerts = nil
 	sv.banChosen.Clear()
-	a.views["s1"].tab = 2
+	a.views["s1"].tab = tabFirewall
 	save("firewall")
+	f.events = snapshotEvents()
+	sv.tab = tabHistory
+	save("history")
+	sv.histMode = historyByBan
+	save("history-bans")
+	sv.histMode = historyByIP
 	a.views["s1"].tab = 0
 	a.views["s1"].jail = "recidive"
 	tt.SetDark(true)
