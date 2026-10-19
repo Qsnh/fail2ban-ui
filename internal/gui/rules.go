@@ -651,6 +651,10 @@ func (a *App) ruleDialog(c *ui.Context) {
 }
 
 // ruleFields builds the fields of the rule dialog.
+//
+// The labels of the fields name the inputs alone in them: an input naming
+// itself as its field would make the field a group of that name, whose
+// clicks land wherever its middle is.
 func (a *App) ruleFields(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 	f := &a.ruleForm
 	t := c.Theme()
@@ -671,7 +675,7 @@ func (a *App) ruleFields(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 				note = "fail2ban 预置的规则：留空的项使用其预置设置。"
 			}
 			ui.Field(c, "规则名称", func() {
-				ui.Autocomplete(c, &f.name, s.Presets()).Placeholder("如 nginx-http-auth").Label("规则名称").AutoFocus()
+				ui.Autocomplete(c, &f.name, s.Presets()).Placeholder("如 nginx-http-auth").AutoFocus()
 			}).Description(note)
 		}
 		ui.Field(c, "过滤器", func() {
@@ -679,10 +683,10 @@ func (a *App) ruleFields(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 			if !isNew || preset {
 				hint = keep
 			}
-			ui.Autocomplete(c, &f.filter, s.Config.Filters).Placeholder(hint).Label("过滤器")
+			ui.Autocomplete(c, &f.filter, s.Config.Filters).Placeholder(hint)
 		}).Description("识别日志中失败记录的规则，即 /etc/fail2ban/filter.d/ 中的文件名，如 sshd、nginx-http-auth。")
 		ui.Field(c, "端口", func() {
-			ui.TextInput(c, &f.port).Placeholder("如 ssh、http,https、8000:8100；" + keep).Label("端口")
+			ui.TextInput(c, &f.port).Placeholder("如 ssh、http,https、8000:8100；" + keep)
 		}).Description("封禁来源访问的端口，多个用逗号分隔。")
 		ui.Field(c, "日志来源", func() {
 			ui.Segmented(c, &f.source, "日志文件", "systemd 日志").Label("日志来源")
@@ -710,8 +714,6 @@ func (a *App) ruleFields(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 		}).Description("时长可写秒数或带单位，如 600、10m、1h、1d、1w。")
 		ui.Field(c, "封禁时长", func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Wrap().Children(func() {
-				// The field's label names it: a group's would take the
-				// clicks meant for it.
 				ui.TextInput(c, &f.banTime).Placeholder(short).Width(96).Disabled(f.permanent)
 				if d, err := fail2ban.ParseTime(f.banTime); err == nil && d > 0 && !f.permanent {
 					ui.Text(c, durationLabel(d)).FontSize(12.5).TextColor(t.TextMuted).SingleLine()
@@ -726,7 +728,7 @@ func (a *App) ruleFields(c *ui.Context, sv *serverView, s *fail2ban.Status) {
 		})
 		ui.Field(c, "忽略 IP", func() {
 			ui.Row(c).Gap(8).Children(func() {
-				ui.TextInput(c, &f.ignoreIP).Placeholder("如 127.0.0.1/8 ::1；" + keep).Label("忽略 IP").Grow(1)
+				ui.TextInput(c, &f.ignoreIP).Placeholder("如 127.0.0.1/8 ::1；" + keep).Grow(1)
 				if ip := sv.info.ClientIP; ip != "" && !slices.Contains(strings.Fields(f.ignoreIP), ip) {
 					ui.Button(c, "加入本机 IP").Tooltip("加入 " + ip + "，以免本机被封禁").OnClick(func() {
 						f.ignoreIP = strings.TrimSpace(f.ignoreIP + " " + ip)
